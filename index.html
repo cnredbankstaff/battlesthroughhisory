@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+ <head><script src="/_sdk/telemetry_sdk.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Battles Through History</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&amp;display=swap" rel="stylesheet">
+  <style>
+        * { font-family: 'Space Mono', monospace; }
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { display: block; image-rendering: pixelated; }
+        .menu-btn { border: 2px solid #0f0; color: #0f0; background: #001a00; padding: 8px 16px; cursor: pointer; font-family: 'Space Mono', monospace; font-size: 13px; }
+        .menu-btn:hover { background: #003300; }
+        .menu-btn.active { background: #004400; border-color: #0f0; }
+        .ui-bar { background: #111; border-top: 2px solid #333; }
+        .formation-btn { border: 1px solid #888; color: #ccc; background: #222; padding: 4px 8px; cursor: pointer; font-size: 11px; font-family: 'Space Mono', monospace; }
+        .formation-btn:hover, .formation-btn.active { background: #444; color: #fff; }
+        .speed-btn { border: 1px solid #666; color: #aaa; background: #1a1a1a; padding: 2px 8px; cursor: pointer; font-size: 10px; font-family: 'Space Mono', monospace; }
+        .speed-btn:hover, .speed-btn.active { background: #333; color: #fff; }
+    </style>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js" type="text/javascript"></script>
+  <script src="/_sdk/data_sdk.js" type="text/javascript"></script>
+  <script src="/_sdk/resizing_sdk.js" type="text/javascript"></script>
+ </head>
+ <body data-template-id="__page-root">
+  <div id="app" style="width:100%;height:calc(100 * min(var(--vh,1vh),1vh));display:flex;flex-direction:column;"><!-- MAIN MENU -->
+   <div id="main-menu" style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;background:#000;">
+    <h1 data-template-id="game-title" class="canva-text" style="color:#0f0;font-size:28px;margin-bottom:8px;text-align:center;"></h1>
+    <p data-template-id="game-subtitle" class="canva-text" style="color:#0a0;font-size:12px;margin-bottom:32px;"></p>
+    <div style="display:flex;flex-direction:column;gap:12px;width:320px;"><button class="menu-btn" onclick="selectCampaign(0)">1. Byzantine Reconquest of Italy (535 AD)</button> <button class="menu-btn" onclick="selectCampaign(1)">2. Mexican-American War (1846)</button> <button class="menu-btn" onclick="selectCampaign(2)">3. American Civil War (1861)</button>
+    </div>
+   </div><!-- FACTION SELECT -->
+   <div id="faction-menu" style="display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;background:#000;">
+    <h2 style="color:#0f0;font-size:20px;margin-bottom:24px;" id="faction-title">Choose Your Side</h2>
+    <div id="faction-buttons" style="display:flex;flex-direction:column;gap:12px;width:280px;"></div><button class="menu-btn" style="margin-top:24px;" onclick="backToMenu()">← Back</button>
+   </div><!-- GAME SCREEN -->
+   <div id="game-screen" style="display:none;flex-direction:column;flex:1;">
+    <div style="flex:1;position:relative;overflow:hidden;">
+     <canvas id="battlefield"></canvas><!-- Mini-map -->
+     <canvas id="minimap" style="position:absolute;bottom:4px;right:4px;border:1px solid #888;width:120px;height:90px;"></canvas><!-- Victory/Defeat overlay -->
+     <div id="overlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.8);display:none;align-items:center;justify-content:center;flex-direction:column;">
+      <h2 id="overlay-text" style="color:#0f0;font-size:24px;"></h2><button class="menu-btn" style="margin-top:16px;" onclick="backToMenu()">Main Menu</button> <button class="menu-btn" style="margin-top:8px;" onclick="nextMission()">Next Mission →</button>
+     </div>
+    </div><!-- Bottom UI Bar -->
+    <div class="ui-bar" style="height:64px;display:flex;align-items:center;padding:0 12px;gap:16px;">
+     <div id="unit-info" style="color:#ccc;font-size:11px;min-width:200px;">
+      No unit selected
+     </div>
+     <div style="display:flex;gap:4px;"><button class="formation-btn" onclick="setFormation('line')">Line</button> <button class="formation-btn" onclick="setFormation('column')">Column</button> <button class="formation-btn" onclick="setFormation('square')">Square</button> <button class="formation-btn" onclick="setFormation('defensive')">Defend</button>
+     </div>
+     <div style="margin-left:auto;display:flex;gap:4px;align-items:center;"><button class="speed-btn" onclick="setSpeed(0.5)">Slow</button> <button class="speed-btn active" onclick="setSpeed(1)">Normal</button> <button class="speed-btn" onclick="setSpeed(2)">Fast</button> <button class="speed-btn" style="border-color:#f80;color:#f80;" onclick="togglePause()">⏸</button>
+     </div>
+    </div>
+   </div>
+  </div>
+  <script src="/_sdk/editing_sdk.js"></script>
+  <script>
+    // Game State
+    const G = {
+        campaign: -1, faction: 0, mission: 0,
+        units: [], objectives: [], terrain: [],
+        selected: null, paused: false, speed: 1,
+        mapW: 800, mapH: 600, time: 0
+    };
+
+    const campaigns = [
+        {
+            name: "Byzantine Reconquest", factions: ["Byzantines"],
+            missions: [
+                { name: "Siege of Naples", objectives: [{x:600,y:200,name:"Naples"}], playerUnits: [
+                    {type:"Byzantine Infantry",x:100,y:300,hp:100,atk:12,spd:1.5,color:"#4488ff",count:30},
+                    {type:"Byzantine Cavalry",x:120,y:400,hp:80,atk:18,spd:3,color:"#2266dd",count:15},
+                    {type:"Archers",x:80,y:350,hp:60,atk:14,spd:1.2,color:"#66aaff",count:20}
+                ], enemyUnits: [
+                    {type:"Ostrogoth Warriors",x:550,y:200,hp:90,atk:14,spd:1.8,color:"#cc3333",count:25},
+                    {type:"Ostrogoth Warriors",x:620,y:300,hp:90,atk:14,spd:1.8,color:"#cc3333",count:30},
+                    {type:"Ostrogoth Warriors",x:580,y:400,hp:90,atk:14,spd:1.8,color:"#aa2222",count:20}
+                ], terrainFeatures: [{type:"forest",x:300,y:150,w:80,h:100},{type:"hill",x:450,y:350,w:100,h:80},{type:"river",x:350,y:0,w:30,h:600}]}
+            ]
+        },
+        {
+            name: "Mexican-American War", factions: ["United States","Mexico"],
+            missions: [
+                { name: "Battle of Palo Alto", objectives: [{x:650,y:300,name:"Palo Alto"}], playerUnits: [
+                    {type:"Infantry",x:100,y:250,hp:90,atk:13,spd:1.5,color:"#3366cc",count:30},
+                    {type:"Infantry",x:100,y:350,hp:90,atk:13,spd:1.5,color:"#3366cc",count:25},
+                    {type:"Cavalry",x:80,y:450,hp:70,atk:16,spd:3,color:"#2255bb",count:12},
+                    {type:"Artillery",x:60,y:300,hp:50,atk:25,spd:0.5,color:"#5588ee",count:8}
+                ], enemyUnits: [
+                    {type:"Infantry",x:600,y:200,hp:85,atk:12,spd:1.4,color:"#cc4444",count:28},
+                    {type:"Infantry",x:620,y:350,hp:85,atk:12,spd:1.4,color:"#cc4444",count:32},
+                    {type:"Cavalry",x:650,y:450,hp:70,atk:15,spd:2.8,color:"#aa3333",count:15},
+                    {type:"Artillery",x:580,y:280,hp:50,atk:22,spd:0.5,color:"#dd5555",count:6}
+                ], terrainFeatures: [{type:"hill",x:350,y:200,w:90,h:70},{type:"fort",x:620,y:280,w:60,h:60}]}
+            ]
+        },
+        {
+            name: "American Civil War", factions: ["Union","Confederacy"],
+            missions: [
+                { name: "Battle of Bull Run", objectives: [{x:600,y:250,name:"Henry Hill"}], playerUnits: [
+                    {type:"Infantry",x:100,y:200,hp:85,atk:12,spd:1.5,color:"#2255cc",count:35},
+                    {type:"Infantry",x:100,y:350,hp:85,atk:12,spd:1.5,color:"#2255cc",count:30},
+                    {type:"Cavalry",x:80,y:500,hp:70,atk:15,spd:3,color:"#1144aa",count:10},
+                    {type:"Artillery",x:60,y:280,hp:50,atk:24,spd:0.5,color:"#4477dd",count:8}
+                ], enemyUnits: [
+                    {type:"Infantry",x:580,y:200,hp:85,atk:13,spd:1.4,color:"#888888",count:30},
+                    {type:"Infantry",x:600,y:350,hp:85,atk:13,spd:1.4,color:"#888888",count:28},
+                    {type:"Cavalry",x:650,y:450,hp:70,atk:16,spd:2.8,color:"#666666",count:12},
+                    {type:"Artillery",x:560,y:270,hp:50,atk:22,spd:0.5,color:"#999999",count:7}
+                ], terrainFeatures: [{type:"forest",x:300,y:100,w:100,h:120},{type:"hill",x:550,y:220,w:120,h:90},{type:"river",x:250,y:0,w:25,h:600},{type:"forest",x:400,y:400,w:80,h:100}]}
+            ]
+        }
+    ];
+
+    function selectCampaign(idx) {
+        G.campaign = idx;
+        const c = campaigns[idx];
+        if (c.factions.length > 1) {
+            document.getElementById('main-menu').style.display = 'none';
+            document.getElementById('faction-menu').style.display = 'flex';
+            document.getElementById('faction-title').textContent = c.name + ' - Choose Side';
+            const fb = document.getElementById('faction-buttons');
+            fb.innerHTML = '';
+            c.factions.forEach((f, i) => {
+                const btn = document.createElement('button');
+                btn.className = 'menu-btn';
+                btn.textContent = f;
+                btn.onclick = () => startGame(i);
+                fb.appendChild(btn);
+            });
+        } else {
+            startGame(0);
+        }
+    }
+
+    function backToMenu() {
+        document.getElementById('main-menu').style.display = 'flex';
+        document.getElementById('faction-menu').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'none';
+        document.getElementById('overlay').style.display = 'none';
+        G.paused = true;
+    }
+
+    function startGame(faction) {
+        G.faction = faction;
+        G.mission = 0;
+        loadMission();
+    }
+
+    function loadMission() {
+        const c = campaigns[G.campaign];
+        const m = c.missions[G.mission % c.missions.length];
+        document.getElementById('main-menu').style.display = 'none';
+        document.getElementById('faction-menu').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'flex';
+        document.getElementById('overlay').style.display = 'none';
+
+        G.units = [];
+        G.objectives = m.objectives.map(o => ({...o, captured: false}));
+        G.terrain = m.terrainFeatures || [];
+        G.selected = null;
+        G.paused = false;
+        G.time = 0;
+
+        // If faction 1 (enemy side), swap player/enemy
+        const pUnits = G.faction === 0 ? m.playerUnits : m.enemyUnits;
+        const eUnits = G.faction === 0 ? m.enemyUnits : m.playerUnits;
+
+        pUnits.forEach(u => G.units.push({...u, team:0, hp:u.hp, maxHp:u.hp, tx:u.x, ty:u.y, formation:'line', fighting:false}));
+        eUnits.forEach(u => G.units.push({...u, team:1, hp:u.hp, maxHp:u.hp, tx:u.x, ty:u.y, formation:'line', fighting:false}));
+
+        resizeCanvas();
+        if (!G.looping) { G.looping = true; requestAnimationFrame(gameLoop); }
+    }
+
+    function nextMission() {
+        G.mission++;
+        loadMission();
+    }
+
+    // Canvas
+    const canvas = document.getElementById('battlefield');
+    const ctx = canvas.getContext('2d');
+    const miniCanvas = document.getElementById('minimap');
+    const mctx = miniCanvas.getContext('2d');
+
+    function resizeCanvas() {
+        const container = canvas.parentElement;
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+        miniCanvas.width = 120;
+        miniCanvas.height = 90;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // Input
+    canvas.addEventListener('click', e => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left) * (G.mapW / canvas.width);
+        const my = (e.clientY - rect.top) * (G.mapH / canvas.height);
+
+        // Check if clicked on a unit
+        let clicked = null;
+        for (const u of G.units) {
+            if (u.hp <= 0) continue;
+            const dx = mx - u.x, dy = my - u.y;
+            if (dx*dx + dy*dy < 400) { clicked = u; break; }
+        }
+
+        if (clicked && clicked.team === 0) {
+            G.selected = clicked;
+            updateInfoBar();
+        } else if (clicked && clicked.team === 1 && G.selected) {
+            // Attack order
+            G.selected.tx = clicked.x;
+            G.selected.ty = clicked.y;
+            G.selected.target = clicked;
+        } else if (G.selected) {
+            // Move order
+            G.selected.tx = mx;
+            G.selected.ty = my;
+            G.selected.target = null;
+        }
+    });
+
+    function updateInfoBar() {
+        const u = G.selected;
+        if (!u) { document.getElementById('unit-info').textContent = 'No unit selected'; return; }
+        document.getElementById('unit-info').textContent = `${u.type} | HP:${Math.round(u.hp)}/${u.maxHp} | Soldiers:${Math.max(1,Math.round(u.count*(u.hp/u.maxHp)))} | ${u.formation}`;
+    }
+
+    function setFormation(f) {
+        if (G.selected) { G.selected.formation = f; updateInfoBar(); }
+    }
+    function setSpeed(s) { G.speed = s; }
+    function togglePause() { G.paused = !G.paused; }
+
+    // Terrain helpers
+    function getTerrainAt(x, y) {
+        for (const t of G.terrain) {
+            if (x >= t.x && x <= t.x+t.w && y >= t.y && y <= t.y+t.h) return t.type;
+        }
+        return null;
+    }
+    function getSpeedMod(u) {
+        const t = getTerrainAt(u.x, u.y);
+        if (t === 'river') return 0.4;
+        if (t === 'forest') return 0.7;
+        return 1;
+    }
+    function getDefMod(u) {
+        const t = getTerrainAt(u.x, u.y);
+        if (t === 'hill') return 1.3;
+        if (t === 'fort') return 1.6;
+        if (t === 'forest') return 1.2;
+        if (u.formation === 'defensive') return 1.4;
+        if (u.formation === 'square') return 1.2;
+        return 1;
+    }
+    function getAtkMod(u) {
+        if (u.formation === 'line') return 1.2;
+        if (u.formation === 'column') return 1.1;
+        return 1;
+    }
+
+    // Game loop
+    let lastTime = 0;
+    function gameLoop(ts) {
+        const dt = Math.min((ts - lastTime) / 1000, 0.1) * G.speed;
+        lastTime = ts;
+        if (!G.paused && document.getElementById('game-screen').style.display !== 'none') {
+            update(dt);
+        }
+        render();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function update(dt) {
+        G.time += dt;
+        const alive = [0, 0];
+
+        for (const u of G.units) {
+            if (u.hp <= 0) continue;
+            alive[u.team]++;
+
+            // AI for enemy units
+            if (u.team === 1 && !u.target) {
+                let closest = null, closestD = Infinity;
+                for (const p of G.units) {
+                    if (p.team === 0 && p.hp > 0) {
+                        const d = Math.hypot(p.x-u.x, p.y-u.y);
+                        if (d < closestD) { closestD = d; closest = p; }
+                    }
+                }
+                if (closest && closestD < 250) { u.target = closest; u.tx = closest.x; u.ty = closest.y; }
+            }
+
+            // Update target position if chasing
+            if (u.target && u.target.hp > 0) { u.tx = u.target.x; u.ty = u.target.y; }
+            else { u.target = null; }
+
+            // Movement
+            const dx = u.tx - u.x, dy = u.ty - u.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 10) {
+                const spd = u.spd * 40 * getSpeedMod(u) * dt;
+                u.x += (dx/dist) * Math.min(spd, dist);
+                u.y += (dy/dist) * Math.min(spd, dist);
+            }
+
+            // Combat
+            if (u.target && u.target.hp > 0) {
+                const cd = Math.hypot(u.target.x-u.x, u.target.y-u.y);
+                if (cd < 30) {
+                    const dmg = u.atk * getAtkMod(u) / getDefMod(u.target) * dt * 2;
+                    u.target.hp -= dmg;
+                    u.hp -= u.target.atk * getAtkMod(u.target) / getDefMod(u) * dt * 1.5;
+                }
+            }
+        }
+
+        // Check objectives
+        for (const obj of G.objectives) {
+            if (!obj.captured) {
+                for (const u of G.units) {
+                    if (u.team === 0 && u.hp > 0 && Math.hypot(u.x-obj.x, u.y-obj.y) < 40) {
+                        obj.captured = true;
+                    }
+                }
+            }
+        }
+
+        // Victory/defeat
+        if (alive[1] === 0 || G.objectives.every(o => o.captured)) {
+            showOverlay("VICTORY!");
+        } else if (alive[0] === 0) {
+            showOverlay("DEFEAT");
+        }
+    }
+
+    function showOverlay(text) {
+        G.paused = true;
+        const ov = document.getElementById('overlay');
+        ov.style.display = 'flex';
+        document.getElementById('overlay-text').textContent = text;
+    }
+
+    function render() {
+        if (!canvas.width) return;
+        const scX = canvas.width / G.mapW, scY = canvas.height / G.mapH;
+        // Background
+        ctx.fillStyle = '#3a8c3a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Grid lines (subtle)
+        ctx.strokeStyle = 'rgba(0,0,0,0.05)';
+        for (let x = 0; x < canvas.width; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+        for (let y = 0; y < canvas.height; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+
+        // Terrain
+        for (const t of G.terrain) {
+            const tx = t.x*scX, ty = t.y*scY, tw = t.w*scX, th = t.h*scY;
+            if (t.type === 'forest') { ctx.fillStyle = '#1a5c1a'; ctx.fillRect(tx,ty,tw,th); drawTrees(tx,ty,tw,th); }
+            else if (t.type === 'hill') { ctx.fillStyle = '#6b9b4a'; ctx.fillRect(tx,ty,tw,th); }
+            else if (t.type === 'river') { ctx.fillStyle = '#2266aa'; ctx.fillRect(tx,ty,tw,th); }
+            else if (t.type === 'fort') { ctx.fillStyle = '#8b7355'; ctx.strokeStyle = '#4a3520'; ctx.lineWidth = 2; ctx.fillRect(tx,ty,tw,th); ctx.strokeRect(tx,ty,tw,th); }
+        }
+
+        // Objectives
+        for (const obj of G.objectives) {
+            ctx.fillStyle = obj.captured ? '#0f0' : '#ff0';
+            ctx.fillRect(obj.x*scX-6, obj.y*scY-6, 12, 12);
+            ctx.fillStyle = '#000';
+            ctx.font = '9px Space Mono';
+            ctx.fillText(obj.name, obj.x*scX-15, obj.y*scY-10);
+        }
+
+        // Units
+        for (const u of G.units) {
+            if (u.hp <= 0) continue;
+            const ux = u.x*scX, uy = u.y*scY;
+            const soldiers = Math.max(1, Math.round(u.count * (u.hp/u.maxHp)));
+            // Draw soldiers as tiny dots
+            ctx.fillStyle = u.color;
+            for (let i = 0; i < Math.min(soldiers, 20); i++) {
+                const ox = (i%5-2)*4, oy = (Math.floor(i/5)-2)*4;
+                ctx.fillRect(ux+ox-1, uy+oy-1, 3, 3);
+            }
+            // Flag
+            ctx.fillStyle = u.team === 0 ? '#00f' : '#f00';
+            ctx.fillRect(ux-1, uy-14, 2, 12);
+            ctx.fillRect(ux+1, uy-14, 6, 4);
+            // Selection highlight
+            if (u === G.selected) {
+                ctx.strokeStyle = '#ff0';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(ux-12, uy-16, 24, 24);
+            }
+        }
+
+        // Minimap
+        mctx.fillStyle = '#3a8c3a';
+        mctx.fillRect(0,0,120,90);
+        const msx = 120/G.mapW, msy = 90/G.mapH;
+        for (const t of G.terrain) {
+            mctx.fillStyle = t.type==='forest'?'#1a5c1a':t.type==='river'?'#2266aa':t.type==='hill'?'#6b9b4a':'#8b7355';
+            mctx.fillRect(t.x*msx,t.y*msy,t.w*msx,t.h*msy);
+        }
+        for (const u of G.units) {
+            if (u.hp<=0) continue;
+            mctx.fillStyle = u.team===0?'#44f':'#f44';
+            mctx.fillRect(u.x*msx-1,u.y*msy-1,3,3);
+        }
+    }
+
+    function drawTrees(x,y,w,h) {
+        ctx.fillStyle = '#0d4a0d';
+        for (let i=0;i<8;i++) {
+            const tx=x+Math.random()*w, ty=y+Math.random()*h;
+            ctx.beginPath(); ctx.arc(tx,ty,4,0,Math.PI*2); ctx.fill();
+        }
+    }
+
+    resizeCanvas();
+    </script>
+ <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a106143dc208f9a9',t:'MTc4MjI0NDgyNy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
